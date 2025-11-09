@@ -1,0 +1,68 @@
+{
+    "airports": 
+    [
+        {
+            "id": 1,
+            "name": "Seattle-Tacoma International Airport",
+            "iata": "SEA",
+            "icao": "KSEA",
+            "latitude_deg": 47.4498889,
+            "longitude_deg": -122.3117778,
+            "altitude_m": 131.8
+        },
+        {
+            "id": 2,
+            "name": "Renton Municipal Airport",
+            "iata": "RNT",
+            "icao": "KRNT",
+            "latitude_deg": 47.4931389,
+            "longitude_deg": -122.2157500,
+            "altitude_m": 9.8
+        },
+        {
+            "id": 3,
+            "name": "Boeing Field/King County International Airport",
+            "iata": "BFI",
+            "icao": "KBFI",
+            "latitude_deg": 47.5299722,
+            "longitude_deg": -122.3019444,
+            "altitude_m": 6.6
+        },
+        {
+            "id": 4,
+            "name": "Paine Field",
+            "iata": "PAE",
+            "icao": "KPAE",
+            "latitude_deg": 47.9073181,
+            "longitude_deg": -122.2820939,
+            "altitude_m": 185.0
+        },
+        {
+            "id": 5, 
+            "name": "San Francisco International Airport",
+            "iata": "SFO",
+            "icao": "KSFO",
+            "latitude_deg": 37.6188056,
+            "longitude_deg": -122.3754167,
+            "altitude_m": 4.0
+        },
+        {
+            "id": 6,
+            "name": "Oakland International Airport",
+            "iata": "OAK",
+            "icao": "KOAK",
+            "latitude_deg": 37.7212614,
+            "longitude_deg": -122.2211506,
+            "altitude_m": 2.7
+        },
+        {
+            "id": 7,
+            "name": "San Jose International Airport",
+            "iata": "SJC",
+            "icao": "KSJC",
+            "latitude_deg": 37.3629947,
+            "longitude_deg": -121.9286206,
+            "altitude_m": 19.0
+        }
+    ]
+}
