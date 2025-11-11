@@ -48,3 +48,14 @@ def get_distance_and_bearing_to_point(
     distance_nm = distance_m * NM_PER_METERS
     bearing_deg = normalize_angle(fwd_azimuth_deg)
     return distance_nm, bearing_deg
+
+def get_closure_rate(
+    ref_lat_deg: float, ref_lon_deg: float, target_lat_deg: float, target_lon_deg: float, velocity_kts: float
+) -> float:
+    """ Returns closure rate in knots towards the target point. Positive if closing, negative if opening."""
+    _, bearing_deg = get_distance_and_bearing_to_point(
+        ref_lat_deg, ref_lon_deg, target_lat_deg, target_lon_deg
+    )
+    relative_heading_deg = get_relative_heading_deg(bearing_deg, 0.0)  # Assuming heading is 0 for closure rate
+    closure_rate_kts = velocity_kts * np.cos(np.radians(relative_heading_deg))
+    return closure_rate_kts
