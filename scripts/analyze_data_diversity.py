@@ -105,17 +105,64 @@ def main():
         print("Good aircraft diversity!")
 
     # Calculate how much data you'd need for better diversity
-    if duration < 3600:  # Less than 1 hour
-        suggested_hours = 4
-    elif duration < 7200:  # Less than 2 hours
-        suggested_hours = 8
+    aircraft_per_hour = unique_aircraft / (duration / 3600) if duration > 0 else 0
+    
+    print(f"\\nData Quality Assessment:")
+    print(f"Aircraft diversity rate: {aircraft_per_hour:.1f} unique aircraft/hour")
+    
+    if aircraft_per_hour < 20:
+        traffic_density = "Very Low"
+        multiplier = 6  # Need much more time
+    elif aircraft_per_hour < 50:
+        traffic_density = "Low" 
+        multiplier = 4
+    elif aircraft_per_hour < 100:
+        traffic_density = "Moderate"
+        multiplier = 2.5
     else:
-        suggested_hours = max(12, duration / 3600 * 2)
-
-    print(f"   • Suggested time coverage: {suggested_hours:.0f} hours")
-    print(f"   • Target unique aircraft: 200-500")
-
-    # Suggest OpenSky download URLs based on current data timeframe
+        traffic_density = "High"
+        multiplier = 1.5
+    
+    print(f"Traffic density: {traffic_density}")
+    
+    # Calculate time needed to reach target diversity
+    target_aircraft = 300  # Good target for training
+    current_hours = duration / 3600
+    
+    if aircraft_per_hour > 0:
+        total_hours_needed = target_aircraft / aircraft_per_hour
+        additional_hours_needed = max(0, total_hours_needed - current_hours)
+        # Apply multiplier for realistic expectations (data quality may vary)
+        additional_hours_with_buffer = additional_hours_needed * multiplier
+        suggested_total_hours = current_hours + additional_hours_with_buffer
+    else:
+        suggested_total_hours = 8  # Fallback if no aircraft detected
+    
+    # Cap at reasonable limits
+    suggested_total_hours = max(2, min(suggested_total_hours, 24))
+    
+    print(f"\\nTime Recommendations:")
+    print(f"   • Current coverage: {current_hours:.1f} hours")
+    print(f"   • Additional hours needed: {suggested_total_hours - current_hours:.1f} hours")
+    print(f"   • Suggested total coverage: {suggested_total_hours:.0f} hours") 
+    print(f"   • Expected aircraft with suggestion: ~{aircraft_per_hour * suggested_total_hours:.0f}")
+    
+    # More specific recommendations based on current state
+    if unique_aircraft < 50:
+        print(f"\\nPriority Actions (Very Low Diversity):")
+        if aircraft_per_hour < 10:
+            print("   • Try peak traffic hours (7-9 AM, 5-7 PM local time)")
+            print("   • Consider busier airports (LAX, ATL, DFW instead of regional)")
+        print("   • Download multiple consecutive days")
+        print("   • Combine approach and departure corridors")
+    elif unique_aircraft < 200:
+        print(f"\\nPriority Actions (Low Diversity):")
+        print("   • Extend time window to cover rush hours")
+        print("   • Add adjacent time periods (before/after current window)")
+    else:
+        print(f"\\nOptimization Suggestions:")
+        print("   • Current diversity is adequate for initial training")
+        print("   • Consider longer time series for temporal modeling")    # Suggest OpenSky download URLs based on current data timeframe
     if "time" in df.columns:
         start_dt = datetime.fromtimestamp(min_time)
         print(f"\nOpenSky Data Download Suggestions:")
