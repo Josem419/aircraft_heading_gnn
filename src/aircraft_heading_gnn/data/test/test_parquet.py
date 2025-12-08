@@ -4,6 +4,7 @@ Test script for parquet-based dataset loading.
 Run after sourcing setup_env.sh from repo root.
 """
 
+import traceback
 from aircraft_heading_gnn.data.dataset import AircraftGraphDataset
 
 # Path to the parquet file
@@ -41,5 +42,4 @@ try:
     
 except Exception as e:
     print(f"Error: {e}")
-    import traceback
     traceback.print_exc()
