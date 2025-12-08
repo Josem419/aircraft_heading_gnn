@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..utils.angles import bin_heading_deg, ang_diff_deg
+from aircraft_heading_gnn.utils.angles import bin_heading_deg, ang_diff_deg
 
 def compute_future_heading_bins(df, delta_s=15, bin_size=5, min_turn_deg=None):
     """
