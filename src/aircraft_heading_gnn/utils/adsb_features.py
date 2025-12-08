@@ -6,7 +6,7 @@ from pyproj import Geod
 
 from typing import Optional, Dict, Any, Tuple
 
-from .angles import wrap_deg, ang_diff_deg, circ_distance_deg, normalize_angle
+from aircraft_heading_gnn.utils.angles import wrap_deg, ang_diff_deg, circ_distance_deg, normalize_angle
 
 # WGS-84 ellipsoid
 GEOD = Geod(ellps="WGS84")
