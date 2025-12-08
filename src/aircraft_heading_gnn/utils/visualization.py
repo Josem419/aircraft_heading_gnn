@@ -16,6 +16,7 @@ def plot_trajectories(
     df: pd.DataFrame,
     airport_lat: Optional[float] = None,
     airport_lon: Optional[float] = None,
+    airport_icao: Optional[str] = None,
     color_by: str = 'icao24',
     max_trajectories: int = 50,
     figsize: Tuple[int, int] = (12, 10),
@@ -66,14 +67,14 @@ def plot_trajectories(
     
     # Plot airport if provided
     if airport_lat is not None and airport_lon is not None:
-        ax.plot(airport_lon, airport_lat, 'r*', markersize=20, label='Airport')
+        ax.plot(airport_lon, airport_lat, 'r*', markersize=20, label=f"Airport: {airport_icao or ''}")
         
         # Add circles for terminal area boundaries
         for radius_nm in [10, 20, 30, 40]:
             # Approximate conversion: 1 nm ≈ 1/60 degree
             radius_deg = radius_nm / 60.0
             circle = plt.Circle(
-                (airport_lon, airport_lat), radius_deg,
+                (airport_lon, airport_lat), radius_deg
                 fill=False, color='gray', linestyle='--', alpha=0.3
             )
             ax.add_patch(circle)

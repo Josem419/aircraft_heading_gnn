@@ -19,7 +19,6 @@ from aircraft_heading_gnn.utils.visualization import (
     plot_trajectories,
     plot_heading_distribution,
 )
-from aircraft_heading_gnn.data.dataset import AircraftGraphDataset
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -88,6 +87,7 @@ def main():
         df_clean,
         airport_lat=airport_lat,
         airport_lon=airport_lon,
+        airport_icao=args.airport_icao,
         max_trajectories=args.max_trajs,
         save_path=os.path.join(args.output_dir, "trajectories.png"),
     )
