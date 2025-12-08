@@ -422,6 +422,7 @@ class AircraftGraphDataset(Dataset):
 
         return edge_index, edge_attr
 
+    # TODO: consider moving this logic to labeling.py
     def _get_labels(
         self, df: pd.DataFrame, current_time: int
     ) -> Dict[str, torch.Tensor]:
