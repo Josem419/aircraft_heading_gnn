@@ -8,6 +8,8 @@ import pandas as pd
 import torch
 from torch_geometric.data import Data, Dataset
 from typing import Optional, List, Tuple, Dict
+import os
+import json
 from pathlib import Path
 import pickle
 
@@ -32,37 +34,151 @@ class AircraftGraphDataset(Dataset):
     - Target: Future heading for each aircraft
     """
 
+    @property
+    def raw_file_names(self):
+        """Raw parquet file."""
+        return ['out.parquet'] if self.use_parquet else []
+
+    @property
+    def processed_file_names(self):
+        """Processed graph snapshots."""
+        return ['snapshots.pt'] if self.use_parquet else []
+
+    def download(self):
+        """Download not needed - parquet file already exists."""
+        pass
+
+    def process(self):
+        """Process parquet file into graph snapshots."""
+        if not self.use_parquet:
+            return
+            
+        print("Processing parquet file into graph snapshots...")
+        
+        # Load parquet file
+        if self.parquet_path:
+            parquet_path = self.parquet_path
+        else:
+            parquet_path = os.path.join(self.raw_dir, 'out.parquet')
+        df = pd.read_parquet(parquet_path)
+        
+        print(f"Loaded {len(df):,} records from parquet")
+        
+        # Apply preprocessing pipeline
+        from .preprocessing import (
+            filter_terminal_area, clean_trajectories, compute_derived_features
+        )
+        
+        # Filter to terminal area
+        df = filter_terminal_area(
+            df, self.airport_lat, self.airport_lon,
+            radius_nm=TERMINAL_RADIUS_NM,
+            max_altitude_ft=18000.0
+        )
+        print(f"After terminal area filter: {len(df):,} records")
+        
+        # Clean trajectories
+        df = clean_trajectories(
+            df,
+            min_points=30,
+            max_gap_seconds=60.0,
+            min_speed_kts=50.0,
+            max_speed_kts=600.0
+        )
+        print(f"After cleaning: {len(df):,} records")
+        
+        # Compute derived features
+        df = compute_derived_features(df)
+        
+        # Store processed dataframe
+        self.data_df = df
+        
+        # Create snapshots
+        self.snapshots = self._create_snapshots()
+        print(f"Created {len(self.snapshots)} graph snapshots")
+        
+        # Save processed snapshots
+        processed_path = os.path.join(self.processed_dir, 'snapshots.pt')
+        torch.save({
+            'snapshots': self.snapshots,
+            'data_df': self.data_df,
+            'airport_lat': self.airport_lat,
+            'airport_lon': self.airport_lon,
+            'params': {
+                'time_step': self.time_step,
+                'prediction_horizon': self.prediction_horizon,
+                'max_distance_nm': self.max_distance_nm
+            }
+        }, processed_path)
+        print(f"Saved processed data to {processed_path}")
+        pass
+
     def __init__(
         self,
-        data_df: pd.DataFrame,
-        airport_lat: float,
-        airport_lon: float,
+        data_df: pd.DataFrame = None,
+        airport_lat: float = None,
+        airport_lon: float = None,
+        airports_json_path: str = None,
+        airport_icao: str = "KSEA",
         time_step_s: int = TIME_BETWEEN_SNAPSHOTS_SEC,
         prediction_horizon_s: int = PREDICTION_HORIZON_SEC,
         max_distance_nm: float = MAX_DISTANCE_BETWEEN_AIRCRAFT_NM,
         transform=None,
         pre_transform=None,
+        use_parquet: bool = False,
+        parquet_path: str = None,
     ):
         """
         Args:
-            data_df: Preprocessed DataFrame with trajectories
-            airport_lat: Airport latitude for reference features
-            airport_lon: Airport longitude for reference features
+            data_df: Preprocessed DataFrame with trajectories (if use_parquet=False)
+            airport_lat: Airport latitude for reference features (overrides JSON lookup)
+            airport_lon: Airport longitude for reference features (overrides JSON lookup)
+            airports_json_path: Path to airports.json file for coordinate lookup
+            airport_icao: ICAO code of airport to use (default: KSEA for SeaTac)
             time_step: Temporal resolution for graph snapshots (seconds)
             prediction_horizon: Time ahead to predict heading (seconds)
             max_distance_nm: Maximum distance for edge creation (nautical miles)
             transform: Optional transform to apply to each graph
             pre_transform: Optional pre-transform
+            use_parquet: Whether to load data from parquet file instead of data_df
+            parquet_path: Path to parquet file (if use_parquet=True)
         """
 
-
-        super().__init__(None, transform, pre_transform)
-        self.data_df = data_df.copy()
-        self.airport_lat = airport_lat
-        self.airport_lon = airport_lon
+        # Load airport coordinates from JSON if provided
+        if airports_json_path and (airport_lat is None or airport_lon is None):
+            with open(airports_json_path, 'r') as f:
+                airports_data = json.load(f)
+            
+            # Find airport by ICAO code
+            airport_info = None
+            for airport in airports_data['airports']:
+                if airport['icao'] == airport_icao:
+                    airport_info = airport
+                    break
+            
+            if airport_info is None:
+                raise ValueError(f"Airport with ICAO code '{airport_icao}' not found in {airports_json_path}")
+            
+            self.airport_lat = airport_info['latitude_deg']
+            self.airport_lon = airport_info['longitude_deg']
+            print(f"Loaded airport {airport_info['name']} ({airport_icao}): {self.airport_lat:.6f}, {self.airport_lon:.6f}")
+        else:
+            self.airport_lat = airport_lat
+            self.airport_lon = airport_lon
+        
+        # Store other parameters
         self.time_step = time_step_s
         self.prediction_horizon = prediction_horizon_s
         self.max_distance_nm = max_distance_nm
+        self.use_parquet = use_parquet
+        self.parquet_path = parquet_path
+
+        # Set root directory for PyTorch Geometric Dataset
+        root_dir = None
+        if use_parquet and parquet_path:
+            root_dir = os.path.dirname(parquet_path)
+        
+        super().__init__(root_dir, transform, pre_transform)
 
         self.node_features = [
             "lat",
@@ -73,8 +189,33 @@ class AircraftGraphDataset(Dataset):
             "vertrate",
         ]
 
-        # Create time-based snapshots - each time snapshot is a graph to be trained on 
-        self.snapshots = self._create_snapshots()
+        if use_parquet:
+            # Try to load processed snapshots first
+            processed_path = os.path.join(os.path.dirname(parquet_path), 'snapshots.pt')
+            if os.path.exists(processed_path):
+                print(f"Loading processed snapshots from {processed_path}")
+                data = torch.load(processed_path)
+                self.snapshots = data['snapshots']
+                self.data_df = data['data_df']
+                
+                # Verify parameters match
+                saved_params = data['params']
+                if (saved_params['time_step'] != self.time_step or
+                    saved_params['prediction_horizon'] != self.prediction_horizon or
+                    saved_params['max_distance_nm'] != self.max_distance_nm):
+                    print("Parameters changed, reprocessing...")
+                    self.process()
+            else:
+                print("No cached snapshots found, processing from parquet...")
+                self.process()
+        else:
+            # Traditional in-memory mode
+            if data_df is None:
+                raise ValueError("data_df must be provided when use_parquet=False")
+            self.data_df = data_df.copy()
+            
+            # Create time-based snapshots - each time snapshot is a graph to be trained on 
+            self.snapshots = self._create_snapshots()
 
     def _create_snapshots(self) -> List[Dict]:
         """
