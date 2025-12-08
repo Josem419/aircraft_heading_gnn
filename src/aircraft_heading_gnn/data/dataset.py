@@ -13,8 +13,12 @@ import json
 from pathlib import Path
 import pickle
 
-from ..utils.adsb_features import get_distance_nm, get_azimuth_to_point
-from ..utils.angles import normalize_angle, ang_diff_deg
+from aircraft_heading_gnn.utils.adsb_features import get_distance_nm, get_azimuth_to_point
+from aircraft_heading_gnn.utils.angles import normalize_angle, ang_diff_deg
+from aircraft_heading_gnn.data.preprocessing import (
+            filter_terminal_area, clean_trajectories, compute_derived_features
+        )
+        
 
 # Terminal area radius in degrees (40 nautical miles ≈ 0.67 degrees)
 TERMINAL_RADIUS_DEG = 40.0 / 60.0
@@ -64,11 +68,6 @@ class AircraftGraphDataset(Dataset):
         
         print(f"Loaded {len(df):,} records from parquet")
         
-        # Apply preprocessing pipeline
-        from .preprocessing import (
-            filter_terminal_area, clean_trajectories, compute_derived_features
-        )
-        
         # Filter to terminal area
         df = filter_terminal_area(
             df, self.airport_lat, self.airport_lon,
@@ -111,7 +110,6 @@ class AircraftGraphDataset(Dataset):
             }
         }, processed_path)
         print(f"Saved processed data to {processed_path}")
-        pass
 
     def __init__(
         self,
