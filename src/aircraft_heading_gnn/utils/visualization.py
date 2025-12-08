@@ -74,7 +74,7 @@ def plot_trajectories(
             # Approximate conversion: 1 nm ≈ 1/60 degree
             radius_deg = radius_nm / 60.0
             circle = plt.Circle(
-                (airport_lon, airport_lat), radius_deg
+                (airport_lon, airport_lat), radius_deg,
                 fill=False, color='gray', linestyle='--', alpha=0.3
             )
             ax.add_patch(circle)
