@@ -25,7 +25,8 @@ TERMINAL_RADIUS_DEG = 40.0 / 60.0
 TERMINAL_RADIUS_NM = 180.0
 MAX_DISTANCE_BETWEEN_AIRCRAFT_NM = 35.0  # for edge creation
 PREDICTION_HORIZON_SEC = 15  # seconds ahead to predict heading
-TIME_BETWEEN_SNAPSHOTS_SEC = 10  # seconds between graph snapshots
+TIME_BETWEEN_SNAPSHOTS_SEC = 30  # seconds between graph snapshots (increased for denser graphs)
+INCLUDE_AIRPORT_NODE = True  # Add airport as virtual hub node
 
 
 class AircraftGraphDataset(Dataset):
@@ -256,7 +257,7 @@ class AircraftGraphDataset(Dataset):
         snap_time = snapshot["time"]
 
         # Extract node features
-        node_features = self._extract_node_features(snap_df)
+        node_features = self._extract_node_features(snap_df, snap_time)
 
         # Build edges based on spatial proximity
         edge_index, edge_attr = self._build_edges(snap_df)
@@ -264,13 +265,19 @@ class AircraftGraphDataset(Dataset):
         # Get labels (future headings)
         labels = self._get_labels(snap_df, snap_time)
 
+        # Create position tensor including airport if enabled
+        positions = torch.tensor(snap_df[["lat", "lon"]].values, dtype=torch.float)
+        if INCLUDE_AIRPORT_NODE:
+            airport_pos = torch.tensor([[self.airport_lat, self.airport_lon]], dtype=torch.float)
+            positions = torch.cat([positions, airport_pos], dim=0)
+
         # Create graph
         graph = Data(
             x=node_features,
             edge_index=edge_index,
             edge_attr=edge_attr,
             y=labels["heading_bins"],
-            pos=torch.tensor(snap_df[["lat", "lon"]].values, dtype=torch.float),
+            pos=positions,
             # Additional metadata
             time=torch.tensor([snap_time], dtype=torch.long),
             has_label=labels["has_label"],
@@ -279,17 +286,26 @@ class AircraftGraphDataset(Dataset):
 
         return graph
 
-    def _extract_node_features(self, df: pd.DataFrame) -> torch.Tensor:
+    def _extract_node_features(self, df: pd.DataFrame, snap_time: int) -> torch.Tensor:
         """
         Extract and normalize node features from aircraft states.
 
         Args:
             df: DataFrame with aircraft states at a snapshot
+            snap_time: Snapshot center time for temporal feature calculation
 
         Returns:
-            Tensor of shape [num_nodes, num_features]
+            Tensor of shape [num_nodes, num_features] (now 12D with temporal features)
         """
         features_list = []
+        
+        # Calculate temporal normalization based on actual time range in this snapshot
+        if len(df) > 1:
+            time_min = df["time"].min()
+            time_max = df["time"].max()
+            time_range = max(time_max - time_min, 1.0)  # Avoid division by zero
+        else:
+            time_range = 1.0  # Single aircraft, no temporal variation
 
         for _, row in df.iterrows():
             features = []
@@ -298,6 +314,14 @@ class AircraftGraphDataset(Dataset):
             lat_norm = (row["lat"] - self.airport_lat) / TERMINAL_RADIUS_DEG  
             lon_norm = (row["lon"] - self.airport_lon) / TERMINAL_RADIUS_DEG
             features.extend([lat_norm, lon_norm])
+
+            # Temporal features - time offset from snapshot center
+            time_offset_s = row["time"] - snap_time
+            if time_range > 1.0:
+                time_offset_norm = (2.0 * time_offset_s) / time_range  # Maps actual range to [-1, +1]
+            else:
+                time_offset_norm = 0.0  # Single time point
+            features.append(time_offset_norm)
 
             # Heading as sin/cos to handle circularity
             heading_rad = np.radians(row["heading"])
@@ -329,6 +353,20 @@ class AircraftGraphDataset(Dataset):
             features.extend([dist_norm, np.sin(bearing_rad), np.cos(bearing_rad)])
 
             features_list.append(features)
+
+        # Add airport node features if enabled
+        if INCLUDE_AIRPORT_NODE:
+            airport_features = [
+                0.0, 0.0,  # Airport is at normalized position (0,0)
+                0.0,       # Airport has no temporal offset (always at snapshot center)
+                0.0, 0.0,  # No heading (sin=0, cos=0)
+                0.0,       # No velocity
+                0.0,       # Ground level altitude
+                0.0,       # No vertical rate
+                0.0,       # Distance to itself is 0
+                0.0, 1.0   # Bearing: pointing north (sin=0, cos=1)
+            ]
+            features_list.append(airport_features)
 
         return torch.tensor(features_list, dtype=torch.float)
 
@@ -412,6 +450,43 @@ class AircraftGraphDataset(Dataset):
                     edge_features.append(edge_feature_ij)
                     edge_features.append(edge_feature_ji)
 
+        # Add airport connections if enabled
+        if INCLUDE_AIRPORT_NODE:
+            airport_node_idx = num_nodes  # Airport is the last node
+            
+            for i in range(num_nodes):  # Connect each aircraft to airport
+                # Aircraft to airport
+                dist_to_airport = get_distance_nm(
+                    self.airport_lat, self.airport_lon, df.iloc[i]["lat"], df.iloc[i]["lon"]
+                )
+                bearing_to_airport = get_azimuth_to_point(
+                    df.iloc[i]["lat"], df.iloc[i]["lon"], self.airport_lat, self.airport_lon
+                )
+                
+                dist_norm = dist_to_airport / TERMINAL_RADIUS_NM
+                bearing_rad = np.radians(bearing_to_airport)
+                
+                # Aircraft -> Airport edge
+                edge_list.append([i, airport_node_idx])
+                edge_features.append([
+                    dist_norm,
+                    np.sin(bearing_rad),
+                    np.cos(bearing_rad),
+                    0.0, 0.0  # No relative heading (airport has no heading)
+                ])
+                
+                # Airport -> Aircraft edge (reverse direction)
+                bearing_from_airport = (bearing_to_airport + 180) % 360
+                bearing_from_rad = np.radians(bearing_from_airport)
+                
+                edge_list.append([airport_node_idx, i])
+                edge_features.append([
+                    dist_norm,
+                    np.sin(bearing_from_rad),
+                    np.cos(bearing_from_rad),
+                    0.0, 0.0  # No relative heading
+                ])
+
         if len(edge_list) == 0:
             # No edges - create empty tensors
             edge_index = torch.zeros((2, 0), dtype=torch.long)
@@ -466,6 +541,12 @@ class AircraftGraphDataset(Dataset):
                 labels.append(-1)  # Invalid label
                 has_label.append(False)
                 delta_headings.append(0.0)
+
+        # Add label for airport node (no prediction target)
+        if INCLUDE_AIRPORT_NODE:
+            labels.append(-1)  # Airport has no heading prediction
+            has_label.append(False)
+            delta_headings.append(0.0)
 
         return {
             "heading_bins": torch.tensor(labels, dtype=torch.long),
