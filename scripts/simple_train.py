@@ -72,7 +72,7 @@ def evaluate(model, loader, criterion, device):
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(device)
-            # Forward pass
+            
             out = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
             
             mask = batch.has_label
