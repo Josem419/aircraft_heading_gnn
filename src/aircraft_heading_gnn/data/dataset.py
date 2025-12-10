@@ -11,6 +11,7 @@ from typing import Optional, List, Tuple, Dict
 import os
 import json
 import glob
+from pathlib import Path
 
 from aircraft_heading_gnn.utils.adsb_features import (
     get_distance_nm,
@@ -212,14 +213,18 @@ class AircraftGraphDataset(Dataset):
             self._cumulative_lengths = None
 
         # Set root directory for PyTorch Geometric Dataset
-        root_dir = None
         if use_parquet and parquet_path:
-            if batch_mode:
-                root_dir = parquet_path
-            else:
-                root_dir = os.path.dirname(parquet_path)
+            pp = Path(parquet_path).resolve()
 
-        super().__init__(root_dir, transform, pre_transform)
+            if batch_mode:
+                if not pp.is_dir():
+                    raise ValueError("batch_mode=True requires directory for parquet_path")
+                root_dir = pp
+            else:
+                root_dir = pp.parent   # SAFE
+
+        super().__init__(str(root_dir), transform, pre_transform)
+
 
         self.node_features = [
             "lat",
