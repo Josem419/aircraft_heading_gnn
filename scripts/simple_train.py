@@ -4,20 +4,13 @@ Simple training script to validate model architecture and loss reduction.
 Focuses on proving the model can learn from existing data before expanding dataset.
 """
 
-import sys
-import os
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
-
 import torch
-import torch.nn.functional as F
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from torch.utils.data import Subset
 import numpy as np
 from tqdm import tqdm
 import argparse
-from pathlib import Path
 
 from aircraft_heading_gnn.data.dataset import (
     AircraftGraphDataset,
@@ -42,6 +35,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
     total_samples = 0
+    total_labeled_nodes = 0  # track how many labeled nodes we actually use
 
     for batch in tqdm(loader, desc="Training"):
         batch = batch.to(device)
@@ -52,17 +46,19 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
         # Only compute loss on nodes with labels
         mask = batch.has_label
-        if mask.sum() == 0:  # Skip batch if no labels
+        labeled_in_batch = mask.sum().item()
+        if labeled_in_batch == 0:  # Skip batch if no labels
             continue
 
         loss = criterion(out[mask], batch.y[mask])
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item() * mask.sum().item()
-        total_samples += mask.sum().item()
+        total_loss += loss.item() * labeled_in_batch
+        total_samples += labeled_in_batch
+        total_labeled_nodes += labeled_in_batch
 
-    return total_loss / max(total_samples, 1)
+    return total_loss / max(total_samples, 1), total_labeled_nodes
 
 
 def evaluate(model, loader, criterion, device):
@@ -72,6 +68,7 @@ def evaluate(model, loader, criterion, device):
     total_samples = 0
     all_preds = []
     all_targets = []
+    total_labeled_nodes = 0  # track labeled nodes seen
 
     with torch.no_grad():
         for batch in loader:
@@ -80,12 +77,14 @@ def evaluate(model, loader, criterion, device):
             out = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
 
             mask = batch.has_label
-            if mask.sum() == 0:
+            labeled_in_batch = mask.sum().item()
+            if labeled_in_batch == 0:
                 continue
 
             loss = criterion(out[mask], batch.y[mask])
-            total_loss += loss.item() * mask.sum().item()
-            total_samples += mask.sum().item()
+            total_loss += loss.item() * labeled_in_batch
+            total_samples += labeled_in_batch
+            total_labeled_nodes += labeled_in_batch
 
             # Get predictions
             preds = torch.argmax(out[mask], dim=1)
@@ -105,7 +104,7 @@ def evaluate(model, loader, criterion, device):
     else:
         acc_15deg = acc_30deg = 0.0
 
-    return avg_loss, acc_15deg, acc_30deg, len(all_targets)
+    return avg_loss, acc_15deg, acc_30deg, len(all_targets), total_labeled_nodes
 
 
 def main():
@@ -118,6 +117,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--max_files", type=int, default=2, help="Max parquet files to use")
     args = parser.parse_args()
 
     # Set device
@@ -130,7 +130,9 @@ def main():
         airports_json_path="data/airports.json",
         airport_icao="KSEA",
         use_parquet=True,
-        parquet_path="data/processed/out.parquet",
+        parquet_path="data/processed/batches",
+        batch_mode=True,
+        max_files=args.max_files,
         prediction_horizon_s=10,  # Shorter prediction horizon for better labels
     )
 
@@ -140,21 +142,12 @@ def main():
         print("No data available!")
         return
 
-    # Check data quality
+    # Check data quality on a single sample
     sample = dataset[0]
     print(
         f"Sample graph: {sample.x.shape[0]} nodes, {sample.edge_index.shape[1]//2} edges"
     )
     print(f"Node features: {sample.x.shape[1]}D")
-
-    # Count total labeled samples
-    total_labeled = 0
-    for i in range(len(dataset)):
-        total_labeled += dataset[i].has_label.sum().item()
-    print(f"Total labeled nodes across all snapshots: {total_labeled}")
-
-    if total_labeled < 10:
-        print("Warning: Very few labeled samples. Training may not be effective.")
 
     # Split dataset
     train_idx, val_idx, test_idx = create_train_val_test_split(
@@ -165,8 +158,24 @@ def main():
     train_dataset = Subset(dataset, train_idx)
     val_dataset = Subset(dataset, val_idx)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    num_workers = 8
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=num_workers,       # or 8, depending on your CPU
+        pin_memory=True      # good when using CUDA
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+
 
     # Create model
     print(f"Creating {args.model_type.upper()} model...")
@@ -203,16 +212,18 @@ def main():
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
 
     # Training loop
-    print(f"\\nStarting training for {args.epochs} epochs...")
+    print(f"\nStarting training for {args.epochs} epochs...")
     best_val_loss = float("inf")
     patience_counter = 0
 
     for epoch in range(args.epochs):
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss, train_labeled = train_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
 
         # Validate
-        val_loss, val_acc_15, val_acc_30, val_samples = evaluate(
+        val_loss, val_acc_15, val_acc_30, val_samples, val_labeled = evaluate(
             model, val_loader, criterion, device
         )
 
@@ -233,7 +244,9 @@ def main():
             f"Val Loss: {val_loss:.4f} | "
             f"Val Acc@15°: {val_acc_15:.3f} | "
             f"Val Acc@30°: {val_acc_30:.3f} | "
-            f"Val Samples: {val_samples}"
+            f"Val Samples: {val_samples} | "
+            f"Train labeled: {train_labeled} | "
+            f"Val labeled: {val_labeled}"
         )
 
         if patience_counter >= 15:
@@ -241,34 +254,35 @@ def main():
             break
 
     # Final evaluation
-    print(f"\\nBest validation loss: {best_val_loss:.4f}")
+    print(f"\nBest validation loss: {best_val_loss:.4f}")
 
     # Load best model for final test
     model.load_state_dict(torch.load(f"best_model_{args.model_type}.pt"))
     test_dataset = Subset(dataset, test_idx)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    test_loss, test_acc_15, test_acc_30, test_samples = evaluate(
+    test_loss, test_acc_15, test_acc_30, test_samples, test_labeled = evaluate(
         model, test_loader, criterion, device
     )
     print(
         f"Test Results: Loss: {test_loss:.4f} | "
         f"Acc@15°: {test_acc_15:.3f} | "
         f"Acc@30°: {test_acc_30:.3f} | "
-        f"Samples: {test_samples}"
+        f"Samples: {test_samples} | "
+        f"Labeled: {test_labeled}"
     )
 
     # Quick sanity check
     if train_loss < 3.5:  # Cross-entropy should be < 3.5 for 72 classes if learning
         print(
-            "\\n Model appears to be learning! Loss reduction suggests architecture is sound."
+            "\n Model appears to be learning! Loss reduction suggests architecture is sound."
         )
-        if val_acc_15 > 0.1:  # Better than random for angular prediction
+        if test_acc_15 > 0.1:  # Better than random for angular prediction
             print(" Model shows predictive capability above random chance.")
         else:
             print(" Model may need more data or tuning for good accuracy.")
     else:
-        print("\\n Model may not be learning effectively. Consider:")
+        print("\n Model may not be learning effectively. Consider:")
         print("   - Learning rate adjustment")
         print("   - Model architecture changes")
         print("   - Data quality issues")

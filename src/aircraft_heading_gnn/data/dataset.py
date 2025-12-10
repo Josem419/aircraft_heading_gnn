@@ -30,7 +30,7 @@ TERMINAL_RADIUS_DEG = TERMINAL_RADIUS_NM / 60.0
 MAX_DISTANCE_BETWEEN_AIRCRAFT_NM = 35.0  # for edge creation
 PREDICTION_HORIZON_SEC = 15  # seconds ahead to predict heading
 TIME_BETWEEN_SNAPSHOTS_SEC = (
-    30  # seconds between graph snapshots (increased for denser graphs)
+    10  # seconds between graph snapshots (increased for denser graphs)
 )
 INCLUDE_AIRPORT_NODE = True  # Add airport as virtual hub node
 
@@ -246,6 +246,13 @@ class AircraftGraphDataset(Dataset):
             # Create time-based snapshots - each time snapshot is a graph to be trained on
             self.snapshots = self._create_snapshots()
 
+        # Cache graphs only for datasets that actually have snapshots (non-batch mode)
+        if not self.batch_mode:
+            self._graphs = [None] * len(self.snapshots)
+        else:
+            self._graphs = None
+
+
     def _process_single_mode(self):
         """Process single parquet file (existing logic)."""
         # Try to load processed snapshots first
@@ -426,40 +433,36 @@ class AircraftGraphDataset(Dataset):
 
             return self._batch_datasets[dataset_idx][local_idx]
         else:
-            # Single dataset mode
+            # Single dataset mode with caching
+            if hasattr(self, "_graphs") and self._graphs[idx] is not None:
+                return self._graphs[idx]
+
             snapshot = self.snapshots[idx]
             snap_df = snapshot["data"]
             snap_time = snapshot["time"]
 
-            # Extract node features
             node_features = self._extract_node_features(snap_df, snap_time)
-
-            # Build edges based on spatial proximity
             edge_index, edge_attr = self._build_edges(snap_df)
-
-            # Get labels (future headings)
             labels = self._get_labels(snap_df, snap_time)
 
-            # Create position tensor including airport if enabled
             positions = torch.tensor(snap_df[["lat", "lon"]].values, dtype=torch.float)
             if INCLUDE_AIRPORT_NODE:
-                airport_pos = torch.tensor(
-                    [[self.airport_lat, self.airport_lon]], dtype=torch.float
-                )
+                airport_pos = torch.tensor([[self.airport_lat, self.airport_lon]], dtype=torch.float)
                 positions = torch.cat([positions, airport_pos], dim=0)
 
-            # Create graph
             graph = Data(
                 x=node_features,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
                 y=labels["heading_bins"],
                 pos=positions,
-                # Additional metadata
                 time=torch.tensor([snap_time], dtype=torch.long),
                 has_label=labels["has_label"],
                 delta_heading=labels["delta_heading"],
             )
+
+            if hasattr(self, "_graphs"):
+                self._graphs[idx] = graph
 
             return graph
 
