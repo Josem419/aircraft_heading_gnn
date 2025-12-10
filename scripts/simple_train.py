@@ -126,11 +126,12 @@ def main():
 
     # Load dataset
     print("Loading dataset...")
+    import os
     dataset = AircraftGraphDataset(
         airports_json_path="data/airports.json",
         airport_icao="KSEA",
         use_parquet=True,
-        parquet_path="data/processed/batches",
+        parquet_path=os.path.abspath("data/processed/batches"),
         batch_mode=True,
         max_files=args.max_files,
         prediction_horizon_s=10,  # Shorter prediction horizon for better labels
