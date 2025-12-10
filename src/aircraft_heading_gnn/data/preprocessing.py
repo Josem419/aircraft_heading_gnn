@@ -15,7 +15,7 @@ from aircraft_heading_gnn.utils.angles import ang_diff_deg
 
 # Constants
 METERS_TO_FEET = 3.28084
-KTS_PER_MPS = 1.94384 
+KTS_PER_MPS = 1.94384
 DEFAULT_TERMINAL_RADIUS_NM = 40.0
 DEFAULT_MAX_ALTITUDE_FT = 18000.0
 DEFAULT_MIN_TRAJECTORY_POINTS = 30
@@ -139,14 +139,13 @@ def clean_trajectories(
     # Remove missing critical fields
     df = df.dropna(subset=["time", "icao24", "lat", "lon", "heading"])
 
-    # Speed filtering  
-    if speed_filter and 'velocity' in df.columns:
+    # Speed filtering
+    if speed_filter and "velocity" in df.columns:
         # open sky velocity is in m/s, need to convert to knots
         # to compare with input kts thresholds
         # using knots because it's more common in aviation
-        speed_kts = df['velocity'] * KTS_PER_MPS
+        speed_kts = df["velocity"] * KTS_PER_MPS
         df = df[(speed_kts >= min_speed_kts) & (speed_kts <= max_speed_kts)]
-
 
     # Sort by aircraft and time
     df = df.sort_values(["icao24", "time"]).reset_index(drop=True)
@@ -200,7 +199,7 @@ def compute_derived_features(df: pd.DataFrame) -> pd.DataFrame:
             valid = time_diff > 0
             turn_rate = pd.Series(np.nan, index=group.index)
             turn_rate[valid] = heading_diff_circ[valid] / time_diff[valid]
-            df.loc[idx, 'turn_rate'] = turn_rate
+            df.loc[idx, "turn_rate"] = turn_rate
 
         # Altitude rate (if available)
         if "geoaltitude" in df.columns and len(group) > 1:
