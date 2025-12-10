@@ -213,3 +213,4 @@ __marimo__/
 plots/
 analysis/
 prediction_analysis/
+data/processed/*
