@@ -10,22 +10,28 @@ from torch_geometric.data import Data, Dataset
 from typing import Optional, List, Tuple, Dict
 import os
 import json
-from pathlib import Path
-import pickle
+import glob
 
-from aircraft_heading_gnn.utils.adsb_features import get_distance_nm, get_azimuth_to_point
-from aircraft_heading_gnn.utils.angles import normalize_angle, ang_diff_deg
+from aircraft_heading_gnn.utils.adsb_features import (
+    get_distance_nm,
+    get_azimuth_to_point,
+)
+from aircraft_heading_gnn.utils.angles import ang_diff_deg
 from aircraft_heading_gnn.data.preprocessing import (
-            filter_terminal_area, clean_trajectories, compute_derived_features
-        )
-        
+    filter_terminal_area,
+    clean_trajectories,
+    compute_derived_features,
+)
 
-# Terminal area radius in degrees (40 nautical miles ≈ 0.67 degrees)
-TERMINAL_RADIUS_DEG = 40.0 / 60.0
+
+# Terminal area radius based on default terminal radius in nautical miles
 TERMINAL_RADIUS_NM = 180.0
+TERMINAL_RADIUS_DEG = TERMINAL_RADIUS_NM / 60.0
 MAX_DISTANCE_BETWEEN_AIRCRAFT_NM = 35.0  # for edge creation
 PREDICTION_HORIZON_SEC = 15  # seconds ahead to predict heading
-TIME_BETWEEN_SNAPSHOTS_SEC = 30  # seconds between graph snapshots (increased for denser graphs)
+TIME_BETWEEN_SNAPSHOTS_SEC = (
+    30  # seconds between graph snapshots (increased for denser graphs)
+)
 INCLUDE_AIRPORT_NODE = True  # Add airport as virtual hub node
 
 
@@ -42,12 +48,12 @@ class AircraftGraphDataset(Dataset):
     @property
     def raw_file_names(self):
         """Raw parquet file."""
-        return ['out.parquet'] if self.use_parquet else []
+        return ["out.parquet"] if self.use_parquet else []
 
     @property
     def processed_file_names(self):
         """Processed graph snapshots."""
-        return ['snapshots.pt'] if self.use_parquet else []
+        return ["snapshots.pt"] if self.use_parquet else []
 
     def download(self):
         """Download not needed - parquet file already exists."""
@@ -57,59 +63,64 @@ class AircraftGraphDataset(Dataset):
         """Process parquet file into graph snapshots."""
         if not self.use_parquet:
             return
-            
+
         print("Processing parquet file into graph snapshots...")
-        
+
         # Load parquet file
         if self.parquet_path:
             parquet_path = self.parquet_path
         else:
-            parquet_path = os.path.join(self.raw_dir, 'out.parquet')
+            parquet_path = os.path.join(self.raw_dir, "out.parquet")
         df = pd.read_parquet(parquet_path)
-        
+
         print(f"Loaded {len(df):,} records from parquet")
-        
+
         # Filter to terminal area
         df = filter_terminal_area(
-            df, self.airport_lat, self.airport_lon,
+            df,
+            self.airport_lat,
+            self.airport_lon,
             radius_nm=TERMINAL_RADIUS_NM,
-            max_altitude_ft=18000.0
+            max_altitude_ft=18000.0,
         )
         print(f"After terminal area filter: {len(df):,} records")
-        
+
         # Clean trajectories
         df = clean_trajectories(
             df,
             min_points=30,
             max_gap_seconds=60.0,
             min_speed_kts=50.0,
-            max_speed_kts=600.0
+            max_speed_kts=600.0,
         )
         print(f"After cleaning: {len(df):,} records")
-        
+
         # Compute derived features
         df = compute_derived_features(df)
-        
+
         # Store processed dataframe
         self.data_df = df
-        
+
         # Create snapshots
         self.snapshots = self._create_snapshots()
         print(f"Created {len(self.snapshots)} graph snapshots")
-        
+
         # Save processed snapshots
-        processed_path = os.path.join(self.processed_dir, 'snapshots.pt')
-        torch.save({
-            'snapshots': self.snapshots,
-            'data_df': self.data_df,
-            'airport_lat': self.airport_lat,
-            'airport_lon': self.airport_lon,
-            'params': {
-                'time_step': self.time_step,
-                'prediction_horizon': self.prediction_horizon,
-                'max_distance_nm': self.max_distance_nm
-            }
-        }, processed_path)
+        processed_path = os.path.join(self.processed_dir, "snapshots.pt")
+        torch.save(
+            {
+                "snapshots": self.snapshots,
+                "data_df": self.data_df,
+                "airport_lat": self.airport_lat,
+                "airport_lon": self.airport_lon,
+                "params": {
+                    "time_step": self.time_step,
+                    "prediction_horizon": self.prediction_horizon,
+                    "max_distance_nm": self.max_distance_nm,
+                },
+            },
+            processed_path,
+        )
         print(f"Saved processed data to {processed_path}")
 
     def __init__(
@@ -126,6 +137,8 @@ class AircraftGraphDataset(Dataset):
         pre_transform=None,
         use_parquet: bool = False,
         parquet_path: str = None,
+        batch_mode: bool = False,
+        max_files: Optional[int] = None,
     ):
         """
         Args:
@@ -140,43 +153,72 @@ class AircraftGraphDataset(Dataset):
             transform: Optional transform to apply to each graph
             pre_transform: Optional pre-transform
             use_parquet: Whether to load data from parquet file instead of data_df
-            parquet_path: Path to parquet file (if use_parquet=True)
+            parquet_path: Path to parquet file or directory (if use_parquet=True)
+            batch_mode: If True and parquet_path is directory, load multiple files
+            max_files: Maximum number of parquet files to process (None = all)
         """
 
         # Load airport coordinates from JSON if provided
         if airports_json_path and (airport_lat is None or airport_lon is None):
-            with open(airports_json_path, 'r') as f:
+            with open(airports_json_path, "r") as f:
                 airports_data = json.load(f)
-            
+
             # Find airport by ICAO code
             airport_info = None
-            for airport in airports_data['airports']:
-                if airport['icao'] == airport_icao:
+            for airport in airports_data["airports"]:
+                if airport["icao"] == airport_icao:
                     airport_info = airport
                     break
-            
+
             if airport_info is None:
-                raise ValueError(f"Airport with ICAO code '{airport_icao}' not found in {airports_json_path}")
-            
-            self.airport_lat = airport_info['latitude_deg']
-            self.airport_lon = airport_info['longitude_deg']
-            print(f"Loaded airport {airport_info['name']} ({airport_icao}): {self.airport_lat:.6f}, {self.airport_lon:.6f}")
+                raise ValueError(
+                    f"Airport with ICAO code '{airport_icao}' not found in {airports_json_path}"
+                )
+
+            self.airport_lat = airport_info["latitude_deg"]
+            self.airport_lon = airport_info["longitude_deg"]
+            print(
+                f"Loaded airport {airport_info['name']} ({airport_icao}): {self.airport_lat:.6f}, {self.airport_lon:.6f}"
+            )
         else:
             self.airport_lat = airport_lat
             self.airport_lon = airport_lon
-        
+
+        # Ensure we have valid airport coordinates
+        if self.airport_lat is None or self.airport_lon is None:
+            raise ValueError(
+                "Airport coordinates must be provided or airports_json_path must be set."
+            )
+
         # Store other parameters
         self.time_step = time_step_s
         self.prediction_horizon = prediction_horizon_s
         self.max_distance_nm = max_distance_nm
         self.use_parquet = use_parquet
         self.parquet_path = parquet_path
+        self.batch_mode = batch_mode
+        self.max_files = max_files
+
+        # Determine if we're in batch mode
+        if use_parquet and parquet_path and batch_mode:
+            if not os.path.isdir(parquet_path):
+                raise ValueError(
+                    f"batch_mode=True but parquet_path '{parquet_path}' is not a directory"
+                )
+            self._batch_datasets = []
+            self._cumulative_lengths = [0]
+        else:
+            self._batch_datasets = None
+            self._cumulative_lengths = None
 
         # Set root directory for PyTorch Geometric Dataset
         root_dir = None
         if use_parquet and parquet_path:
-            root_dir = os.path.dirname(parquet_path)
-        
+            if batch_mode:
+                root_dir = parquet_path
+            else:
+                root_dir = os.path.dirname(parquet_path)
+
         super().__init__(root_dir, transform, pre_transform)
 
         self.node_features = [
@@ -189,32 +231,148 @@ class AircraftGraphDataset(Dataset):
         ]
 
         if use_parquet:
-            # Try to load processed snapshots first
-            processed_path = os.path.join(os.path.dirname(parquet_path), 'snapshots.pt')
-            if os.path.exists(processed_path):
-                print(f"Loading processed snapshots from {processed_path}")
-                data = torch.load(processed_path)
-                self.snapshots = data['snapshots']
-                self.data_df = data['data_df']
-                
-                # Verify parameters match
-                saved_params = data['params']
-                if (saved_params['time_step'] != self.time_step or
-                    saved_params['prediction_horizon'] != self.prediction_horizon or
-                    saved_params['max_distance_nm'] != self.max_distance_nm):
-                    print("Parameters changed, reprocessing...")
-                    self.process()
+            if batch_mode:
+                # Batch mode: process multiple parquet files
+                self._process_batch_mode()
             else:
-                print("No cached snapshots found, processing from parquet...")
-                self.process()
+                # Single file mode: existing logic
+                self._process_single_mode()
         else:
             # Traditional in-memory mode
             if data_df is None:
                 raise ValueError("data_df must be provided when use_parquet=False")
             self.data_df = data_df.copy()
-            
-            # Create time-based snapshots - each time snapshot is a graph to be trained on 
+
+            # Create time-based snapshots - each time snapshot is a graph to be trained on
             self.snapshots = self._create_snapshots()
+
+    def _process_single_mode(self):
+        """Process single parquet file (existing logic)."""
+        # Try to load processed snapshots first
+        processed_path = os.path.join(
+            os.path.dirname(self.parquet_path), "snapshots.pt"
+        )
+        if os.path.exists(processed_path):
+            print(f"Loading processed snapshots from {processed_path}")
+            data = torch.load(processed_path)
+            self.snapshots = data["snapshots"]
+            self.data_df = data["data_df"]
+
+            # Verify parameters match
+            saved_params = data["params"]
+            if (
+                saved_params["time_step"] != self.time_step
+                or saved_params["prediction_horizon"] != self.prediction_horizon
+                or saved_params["max_distance_nm"] != self.max_distance_nm
+            ):
+                print("Parameters changed, reprocessing...")
+                self.process()
+        else:
+            print("No cached snapshots found, processing from parquet...")
+            self.process()
+
+    def _process_batch_mode(self):
+        """Process multiple parquet files in batch mode."""
+        # Find all parquet files
+        pattern = os.path.join(self.parquet_path, "*.parquet")
+        parquet_files = sorted(glob.glob(pattern))
+
+        if self.max_files:
+            parquet_files = parquet_files[: self.max_files]
+
+        if not parquet_files:
+            raise ValueError(f"No parquet files found in {self.parquet_path}")
+
+        print(f"Found {len(parquet_files)} parquet files")
+
+        # Process each file into a mini-dataset
+        for i, parquet_file in enumerate(parquet_files):
+            print(
+                f"\n[{i+1}/{len(parquet_files)}] Processing {os.path.basename(parquet_file)}..."
+            )
+
+            try:
+                mini_dataset = self._create_dataset_from_parquet(parquet_file)
+                if (
+                    mini_dataset is not None and len(mini_dataset.snapshots) > 0
+                ):  
+                    self._batch_datasets.append(mini_dataset)
+                    self._cumulative_lengths.append(
+                        self._cumulative_lengths[-1] + len(mini_dataset.snapshots)
+                    )
+                    print(
+                        f"  Created dataset with {len(mini_dataset.snapshots)} snapshots"
+                    )
+                else:
+                    print(
+                        f"  No valid snapshots created from {os.path.basename(parquet_file)}"
+                    )
+            except Exception as e:
+                print(f"  Error processing {os.path.basename(parquet_file)}: {e}")
+
+        if not self._batch_datasets:
+            raise ValueError("No valid datasets created from parquet files")
+
+        print(f"\nSuccessfully created {len(self._batch_datasets)} datasets")
+        print(f"Total snapshots: {self._cumulative_lengths[-1]}")
+
+    def _create_dataset_from_parquet(self, parquet_file: str):
+        """Create a mini-dataset from a single parquet file."""
+        # Load and preprocess data
+        df = pd.read_parquet(parquet_file)
+
+        # Remove rows with missing critical data
+        initial_len = len(df)
+        df = df.dropna(subset=["time", "icao24", "lat", "lon", "heading"])
+        print(
+            f"    Loaded {initial_len:,} records, {len(df):,} after removing NaN values"
+        )
+
+        if len(df) == 0:
+            print("    No valid records after NaN removal")  
+            return None  
+
+        # Filter to terminal area
+        df = filter_terminal_area(
+            df,
+            self.airport_lat,
+            self.airport_lon,
+            radius_nm=TERMINAL_RADIUS_NM,  
+            max_altitude_ft=18000.0,
+        )
+        print(f"    After terminal area filter: {len(df):,} records")
+
+        if len(df) == 0:
+            print("    No records left after terminal area filter")  
+            return None  
+
+        # Create trajectory IDs manually
+        df = df.sort_values(["icao24", "time"]).reset_index(drop=True)
+        df["time_diff"] = df.groupby("icao24")["time"].diff()
+        df["trajectory_id"] = (
+            (df["time_diff"] > 120.0) | (df["icao24"] != df["icao24"].shift(1))
+        ).cumsum()
+        df = df.drop(columns=["time_diff"])
+
+        # Compute derived features
+        try:
+            df = compute_derived_features(df)
+            print(f"    After computing features: {len(df):,} records")
+        except Exception as e:
+            print(f"    Warning: Feature computation failed ({e})")
+
+        # Create mini-dataset
+        mini_dataset = AircraftGraphDataset(
+            data_df=df,
+            airport_lat=self.airport_lat,
+            airport_lon=self.airport_lon,
+            time_step_s=self.time_step,
+            prediction_horizon_s=self.prediction_horizon,
+            max_distance_nm=self.max_distance_nm,
+            use_parquet=False,  # Use DataFrame mode
+        )
+
+        return mini_dataset
 
     def _create_snapshots(self) -> List[Dict]:
         """
@@ -240,7 +398,10 @@ class AircraftGraphDataset(Dataset):
 
     def len(self) -> int:
         """Return the number of graphs in the dataset."""
-        return len(self.snapshots)
+        if self.batch_mode and self._batch_datasets is not None:
+            return self._cumulative_lengths[-1] if self._cumulative_lengths else 0
+        else:
+            return len(self.snapshots)
 
     def get(self, idx: int) -> Data:
         """
@@ -252,39 +413,55 @@ class AircraftGraphDataset(Dataset):
         Returns:
             PyTorch Geometric Data object representing the graph
         """
-        snapshot = self.snapshots[idx]
-        snap_df = snapshot["data"]
-        snap_time = snapshot["time"]
+        if self.batch_mode and self._batch_datasets is not None:
+            # Find which mini-dataset contains this index
+            dataset_idx = 0
+            for i, cum_len in enumerate(self._cumulative_lengths[1:]):
+                if idx < cum_len:
+                    dataset_idx = i
+                    break
 
-        # Extract node features
-        node_features = self._extract_node_features(snap_df, snap_time)
+            # Calculate local index within that dataset
+            local_idx = idx - self._cumulative_lengths[dataset_idx]
 
-        # Build edges based on spatial proximity
-        edge_index, edge_attr = self._build_edges(snap_df)
+            return self._batch_datasets[dataset_idx][local_idx]
+        else:
+            # Single dataset mode
+            snapshot = self.snapshots[idx]
+            snap_df = snapshot["data"]
+            snap_time = snapshot["time"]
 
-        # Get labels (future headings)
-        labels = self._get_labels(snap_df, snap_time)
+            # Extract node features
+            node_features = self._extract_node_features(snap_df, snap_time)
 
-        # Create position tensor including airport if enabled
-        positions = torch.tensor(snap_df[["lat", "lon"]].values, dtype=torch.float)
-        if INCLUDE_AIRPORT_NODE:
-            airport_pos = torch.tensor([[self.airport_lat, self.airport_lon]], dtype=torch.float)
-            positions = torch.cat([positions, airport_pos], dim=0)
+            # Build edges based on spatial proximity
+            edge_index, edge_attr = self._build_edges(snap_df)
 
-        # Create graph
-        graph = Data(
-            x=node_features,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            y=labels["heading_bins"],
-            pos=positions,
-            # Additional metadata
-            time=torch.tensor([snap_time], dtype=torch.long),
-            has_label=labels["has_label"],
-            delta_heading=labels["delta_heading"],
-        )
+            # Get labels (future headings)
+            labels = self._get_labels(snap_df, snap_time)
 
-        return graph
+            # Create position tensor including airport if enabled
+            positions = torch.tensor(snap_df[["lat", "lon"]].values, dtype=torch.float)
+            if INCLUDE_AIRPORT_NODE:
+                airport_pos = torch.tensor(
+                    [[self.airport_lat, self.airport_lon]], dtype=torch.float
+                )
+                positions = torch.cat([positions, airport_pos], dim=0)
+
+            # Create graph
+            graph = Data(
+                x=node_features,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                y=labels["heading_bins"],
+                pos=positions,
+                # Additional metadata
+                time=torch.tensor([snap_time], dtype=torch.long),
+                has_label=labels["has_label"],
+                delta_heading=labels["delta_heading"],
+            )
+
+            return graph
 
     def _extract_node_features(self, df: pd.DataFrame, snap_time: int) -> torch.Tensor:
         """
@@ -295,10 +472,10 @@ class AircraftGraphDataset(Dataset):
             snap_time: Snapshot center time for temporal feature calculation
 
         Returns:
-            Tensor of shape [num_nodes, num_features] (now 12D with temporal features)
+            Tensor of shape [num_nodes, num_features] (11D including temporal features)  
         """
         features_list = []
-        
+
         # Calculate temporal normalization based on actual time range in this snapshot
         if len(df) > 1:
             time_min = df["time"].min()
@@ -311,14 +488,16 @@ class AircraftGraphDataset(Dataset):
             features = []
 
             # Position features (normalized lat/lon)
-            lat_norm = (row["lat"] - self.airport_lat) / TERMINAL_RADIUS_DEG  
+            lat_norm = (row["lat"] - self.airport_lat) / TERMINAL_RADIUS_DEG
             lon_norm = (row["lon"] - self.airport_lon) / TERMINAL_RADIUS_DEG
             features.extend([lat_norm, lon_norm])
 
             # Temporal features - time offset from snapshot center
             time_offset_s = row["time"] - snap_time
             if time_range > 1.0:
-                time_offset_norm = (2.0 * time_offset_s) / time_range  # Maps actual range to [-1, +1]
+                time_offset_norm = (
+                    2.0 * time_offset_s
+                ) / time_range  # Maps actual range to [-1, +1]
             else:
                 time_offset_norm = 0.0  # Single time point
             features.append(time_offset_norm)
@@ -357,14 +536,17 @@ class AircraftGraphDataset(Dataset):
         # Add airport node features if enabled
         if INCLUDE_AIRPORT_NODE:
             airport_features = [
-                0.0, 0.0,  # Airport is at normalized position (0,0)
-                0.0,       # Airport has no temporal offset (always at snapshot center)
-                0.0, 0.0,  # No heading (sin=0, cos=0)
-                0.0,       # No velocity
-                0.0,       # Ground level altitude
-                0.0,       # No vertical rate
-                0.0,       # Distance to itself is 0
-                0.0, 1.0   # Bearing: pointing north (sin=0, cos=1)
+                0.0,
+                0.0,  # Airport is at normalized position (0,0)
+                0.0,  # Airport has no temporal offset (always at snapshot center)
+                0.0,
+                0.0,  # No heading (sin=0, cos=0)
+                0.0,  # No velocity
+                0.0,  # Ground level altitude
+                0.0,  # No vertical rate
+                0.0,  # Distance to itself is 0
+                0.0,
+                1.0,  # Bearing: pointing north (sin=0, cos=1)
             ]
             features_list.append(airport_features)
 
@@ -445,7 +627,7 @@ class AircraftGraphDataset(Dataset):
                         np.sin(rel_heading_ji_rad),
                         np.cos(rel_heading_ji_rad),
                     ]
-                    
+
                     # Add features for each direction
                     edge_features.append(edge_feature_ij)
                     edge_features.append(edge_feature_ji)
@@ -453,39 +635,51 @@ class AircraftGraphDataset(Dataset):
         # Add airport connections if enabled
         if INCLUDE_AIRPORT_NODE:
             airport_node_idx = num_nodes  # Airport is the last node
-            
+
             for i in range(num_nodes):  # Connect each aircraft to airport
                 # Aircraft to airport
                 dist_to_airport = get_distance_nm(
-                    self.airport_lat, self.airport_lon, df.iloc[i]["lat"], df.iloc[i]["lon"]
+                    self.airport_lat,
+                    self.airport_lon,
+                    df.iloc[i]["lat"],
+                    df.iloc[i]["lon"],
                 )
                 bearing_to_airport = get_azimuth_to_point(
-                    df.iloc[i]["lat"], df.iloc[i]["lon"], self.airport_lat, self.airport_lon
+                    df.iloc[i]["lat"],
+                    df.iloc[i]["lon"],
+                    self.airport_lat,
+                    self.airport_lon,
                 )
-                
+
                 dist_norm = dist_to_airport / TERMINAL_RADIUS_NM
                 bearing_rad = np.radians(bearing_to_airport)
-                
+
                 # Aircraft -> Airport edge
                 edge_list.append([i, airport_node_idx])
-                edge_features.append([
-                    dist_norm,
-                    np.sin(bearing_rad),
-                    np.cos(bearing_rad),
-                    0.0, 0.0  # No relative heading (airport has no heading)
-                ])
-                
+                edge_features.append(
+                    [
+                        dist_norm,
+                        np.sin(bearing_rad),
+                        np.cos(bearing_rad),
+                        0.0,
+                        0.0,  # No relative heading (airport has no heading)
+                    ]
+                )
+
                 # Airport -> Aircraft edge (reverse direction)
                 bearing_from_airport = (bearing_to_airport + 180) % 360
                 bearing_from_rad = np.radians(bearing_from_airport)
-                
+
                 edge_list.append([airport_node_idx, i])
-                edge_features.append([
-                    dist_norm,
-                    np.sin(bearing_from_rad),
-                    np.cos(bearing_from_rad),
-                    0.0, 0.0  # No relative heading
-                ])
+                edge_features.append(
+                    [
+                        dist_norm,
+                        np.sin(bearing_from_rad),
+                        np.cos(bearing_from_rad),
+                        0.0,
+                        0.0,  # No relative heading
+                    ]
+                )
 
         if len(edge_list) == 0:
             # No edges - create empty tensors
@@ -565,8 +759,11 @@ def create_train_val_test_split(
     """
     Split dataset into train/val/test sets.
 
+    Supports both single-dataset and batch-mode datasets.
+    In temporal_split mode, snapshots are ordered by their 'time' field.
+
     Args:
-        dataset: AircraftGraphDataset
+        dataset: AircraftGraphDataset (single-file or batch-mode)
         train_ratio: Proportion for training
         val_ratio: Proportion for validation
         test_ratio: Proportion for testing
@@ -582,8 +779,20 @@ def create_train_val_test_split(
     assert abs(total - 1.0) < 1e-6, "Train/val/test ratios must sum to 1."
 
     if temporal_split:
-        # Sort by time for temporal split
-        times = [dataset.snapshots[i]["time"] for i in indices]
+        # Build a flat array of snapshot times, even in batch_mode
+        if getattr(dataset, "batch_mode", False) and dataset.batch_mode and dataset._batch_datasets is not None:
+            # batch-mode: flatten times from each mini-dataset using cumulative offsets
+            times = np.empty(n, dtype=np.int64)
+            for ds_idx, mini_ds in enumerate(dataset._batch_datasets):
+                offset = dataset._cumulative_lengths[ds_idx]
+                for local_idx, snap in enumerate(mini_ds.snapshots):
+                    global_idx = offset + local_idx
+                    times[global_idx] = snap["time"]
+        else:
+            # non-batch-mode: simple case
+            times = np.array([dataset.snapshots[i]["time"] for i in indices])
+
+        # Sort global indices by time
         sorted_idx = np.argsort(times)
 
         train_end = int(n * train_ratio)
@@ -593,9 +802,8 @@ def create_train_val_test_split(
         val_idx = sorted_idx[train_end:val_end].tolist()
         test_idx = sorted_idx[val_end:].tolist()
 
-        
     else:
-        # Random split
+        # Random split: same for batch and non-batch
         np.random.shuffle(indices)
 
         train_end = int(n * train_ratio)
@@ -604,6 +812,5 @@ def create_train_val_test_split(
         train_idx = indices[:train_end].tolist()
         val_idx = indices[train_end:val_end].tolist()
         test_idx = indices[val_end:].tolist()
-
 
     return train_idx, val_idx, test_idx
