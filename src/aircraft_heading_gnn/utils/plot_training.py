@@ -75,7 +75,7 @@ def plot_training_history(
 def plot_training_dashboard(history: Dict[str, list], save_path: Optional[str] = None):
     epochs = range(1, len(history["train_loss"]) + 1)
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
 
     # Loss
     axes[0].plot(epochs, history["train_loss"], label="Train Loss")

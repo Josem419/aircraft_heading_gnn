@@ -35,4 +35,4 @@ if __name__ == "__main__":
     with open(history_path, "r") as f:
         history = json.load(f)
 
-    plot_training_history(history, save_dir=args.save_dir, show=args.show)
+    plot_training_dashboard(history, save_path=args.save_dir)
