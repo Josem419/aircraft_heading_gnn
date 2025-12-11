@@ -1,5 +1,5 @@
 {
-  "model_type": "GCN",
+  "model_type": "gcn",
   "train_loss": [
     2.3261001259088516,
     2.1486657857894897,
