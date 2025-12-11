@@ -20,8 +20,6 @@ from aircraft_heading_gnn.utils.visualization import (
     plot_heading_distribution,
 )
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
-
 def main():
     parser = argparse.ArgumentParser(description="Visualize aircraft trajectories")
     parser.add_argument(
@@ -81,6 +79,9 @@ def main():
     unique_trajectories = df_clean["icao24"].nunique()
     print(f"Number of unique trajectories: {unique_trajectories}")
 
+    parquet_name = os.path.basename(args.parquet_path)
+    print(f"Data prepared from {parquet_name}, ready for visualization.")
+
     # Plot raw trajectories
     print("Plotting trajectories...")
     plot_trajectories(
@@ -89,13 +90,13 @@ def main():
         airport_lon=airport_lon,
         airport_icao=args.airport_icao,
         max_trajectories=args.max_trajs,
-        save_path=os.path.join(args.output_dir, "trajectories.png"),
+        save_path=os.path.join(args.output_dir, f"{parquet_name}_{args.airport_icao}_trajectories.png"),
     )
 
     # Plot heading distribution
     print("Plotting heading distribution...")
     plot_heading_distribution(
-        df_clean, save_path=os.path.join(args.output_dir, "heading_distribution.png")
+        df_clean, save_path=os.path.join(args.output_dir, f"{parquet_name}_heading_distribution.png")
     )
 
     print(f"Plots saved to {args.output_dir}/")

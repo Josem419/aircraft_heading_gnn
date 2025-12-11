@@ -20,7 +20,7 @@ DEFAULT_TERMINAL_RADIUS_NM = 40.0
 DEFAULT_MAX_ALTITUDE_FT = 18000.0
 DEFAULT_MIN_TRAJECTORY_POINTS = 30
 DEFAULT_MAX_GAP_SECONDS = 60.0
-DEFAULT_MIN_SPEED_KTS = 50.0
+DEFAULT_MIN_SPEED_KTS = 10.0
 DEFAULT_MAX_SPEED_KTS = 600.0
 DEFAULT_PREDICTION_HORIZON_S = 15
 DEFAULT_HEADING_BIN_SIZE = 5
@@ -131,10 +131,6 @@ def clean_trajectories(
         Cleaned DataFrame
     """
     df = df.copy()
-
-    # Remove ground positions
-    if "onground" in df.columns:
-        df = df[df["onground"] == False].copy()
 
     # Remove missing critical fields
     df = df.dropna(subset=["time", "icao24", "lat", "lon", "heading"])
