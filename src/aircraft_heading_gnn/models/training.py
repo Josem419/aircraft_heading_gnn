@@ -7,10 +7,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 import numpy as np
+import datetime
 from typing import Dict, Optional
 from pathlib import Path
 import json
 from tqdm import tqdm
+from pickle import UnpicklingError
 
 from aircraft_heading_gnn.utils.angles import ang_diff_deg
 
@@ -57,15 +59,15 @@ class HeadingLoss(nn.Module):
         Returns:
             Scalar loss
         """
-        # Filter out invalid labels
+        # Check for valid labels
         if has_label is not None:
-            valid_mask = has_label
-            if valid_mask.sum() == 0:
-                # return a dummy 0-loss that still has a gradient path
-                return torch.tensor(0.0, device=logits.device, requires_grad=True)
-
-            logits = logits[valid_mask]
-            targets = targets[valid_mask]
+            valid_count = has_label.sum().item()
+            if valid_count == 0:
+                # Return a small loss to avoid gradient issues, but don't completely zero out
+                dummy_loss = torch.mean(torch.sum(logits**2, dim=-1)) * 1e-6
+                return dummy_loss
+            logits = logits[has_label]
+            targets = targets[has_label]
 
         # Cross-entropy loss
         ce = self.ce_loss(logits, targets)
@@ -103,6 +105,7 @@ class Trainer:
         val_loader: DataLoader,
         optimizer: optim.Optimizer,
         criterion: nn.Module,
+        model_type: str,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         scheduler: Optional[optim.lr_scheduler._LRScheduler] = None,
         save_dir: str = "./checkpoints",
@@ -120,6 +123,7 @@ class Trainer:
             save_dir: Directory to save checkpoints
             use_aux_loss: Whether model has auxiliary tasks (expects dict output)
         """
+        self.model_type = model_type
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -127,7 +131,8 @@ class Trainer:
         self.criterion = criterion
         self.device = device
         self.scheduler = scheduler
-        self.save_dir = Path(save_dir)
+        date_string = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.save_dir = Path(save_dir) / f"run_{date_string}"
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.use_aux_loss = use_aux_loss
 
@@ -135,6 +140,7 @@ class Trainer:
         self.bin_size = getattr(self.criterion, "bin_size", 5.0)
 
         self.history = {
+            "model_type": self.model_type,
             "train_loss": [],
             "val_loss": [],
             "train_acc": [],
@@ -169,9 +175,9 @@ class Trainer:
 
         pbar = tqdm(self.train_loader, desc="Training")
 
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
             batch = batch.to(self.device)
-
+            
             self.optimizer.zero_grad()
 
             # Forward pass
@@ -235,7 +241,7 @@ class Trainer:
         total = 0
         total_mae = 0.0
 
-        for batch in tqdm(self.val_loader, desc="Validation"):
+        for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Validation")):
             batch = batch.to(self.device)
 
             # Forward pass
@@ -369,7 +375,12 @@ class Trainer:
 
     def load_checkpoint(self, filename: str):
         """Load model from checkpoint."""
-        checkpoint = torch.load(self.save_dir / filename, map_location=self.device)
+        checkpoint_path = self.save_dir / filename
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        except UnpicklingError:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
