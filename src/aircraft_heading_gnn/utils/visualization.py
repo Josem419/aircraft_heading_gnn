@@ -18,7 +18,7 @@ def plot_trajectories(
     airport_lon: Optional[float] = None,
     airport_icao: Optional[str] = None,
     color_by: str = "icao24",
-    max_trajectories: int = 50,
+    max_trajectories: int = 1000,
     figsize: Tuple[int, int] = (12, 10),
     save_path: Optional[str] = None,
 ):
