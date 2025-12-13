@@ -16,6 +16,7 @@ This project uses Graph Neural Networks (GNNs) to predict future aircraft headin
 ![Graph Example](docs/images/graph_snapshot_007_nodes_59.png)
 *Graph of 1 snapshot of aircraft interactions in the terminal area*
 
+
 ![Prediction Analysis](docs/images/heading_prediction_errors_KSEA.png)
 *Model prediction error analysis and distribution*
 
@@ -53,6 +54,14 @@ pip install -r requirements.txt
 Download ADS-B data from [OpenSky Network](https://opensky-network.org/datasets/#states/).
 
 Dataset format: CSV with columns `time,icao24,lat,lon,velocity,heading,vertrate,callsign,onground,alert,spi,squawk,baroaltitude,geoaltitude,lastposupdate,lastcontact`
+
+This folder should contain raw and processed data. That said, ADS-B csv's are quite large.
+
+So instead of including them in the repo, you can download a sample file from here:
+
+https://opensky-network.org/datasets/#states/
+Dataset description found here: https://s3.opensky-network.org/data-samples/states/README.txt
+After downloading, place the CSV files in the `data/raw/` directory.
 
 ## Quick Start
 
@@ -121,47 +130,6 @@ Typical performance on terminal area data:
 - **MAE**: ~15-25 degrees
 - **±10° accuracy**: ~60-70%
 - **Turn direction**: ~75-85%
-
-## Citation
-
-```bibtex
-@misc{aircraft_heading_gnn,
-  author = {Jose A. Medina},
-  title = {Aircraft Heading Prediction with Graph Neural Networks},
-  year = {2025},
-  url = {https://github.com/Josem419/aircraft_heading_gnn}
-}
-```
-
-## License
-
-See LICENSE file
-
-
-## Installation
-
-To install the required dependencies, run the following command:
-
-```bash
-# make a virtual environment (optional but recommended)
-python -m venv gnn_env
-source gnn_env/bin/activate  
-```
-Then install the dependencies with pip:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Data
-
-This folder should contain raw and processed data. That said, ADS-B csv's are quite large.
-
-So instead of including them in the repo, you can download a sample file from here:
-
-https://opensky-network.org/datasets/#states/
-Dataset description found here: https://s3.opensky-network.org/data-samples/states/README.txt
-After downloading, place the CSV files in the `data/raw/` directory.
 
 ## Quick Start
 
