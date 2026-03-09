@@ -7,10 +7,10 @@ This module provides the core abstractions for verification and validation:
 - System composition with standardized API in the abstract base System class
 
 The API is designed to support rollout-based verification where:
-1. Environment samples initial states
-2. Agent produces actions from observations
-3. Disturbances perturb actions and observations
-4. System propagates state forward
+  - Environment samples initial states
+  - Agent produces actions from observations
+  - Disturbances perturb actions and observations
+  - System propagates state forward
 """
 
 import abc
