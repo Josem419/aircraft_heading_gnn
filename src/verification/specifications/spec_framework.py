@@ -166,12 +166,6 @@ class Eventually(Specification):
         interval = f"[{self.a},{self.b if self.b is not None else 'T'}]"
         return f"Eventually({interval}({self.inner!r}))"
 
-
-# ---------------------------------------------------------------------------
-# Step-level wrapper (for use inside Always / Eventually)
-# ---------------------------------------------------------------------------
-
-
 class StepSpec(Specification):
     """Specification that evaluates a predicate at each step independently.
 
