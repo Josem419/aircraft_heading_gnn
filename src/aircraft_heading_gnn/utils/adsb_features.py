@@ -1,12 +1,11 @@
 """Utilities for computing features from ADS-B data."""
 
 import numpy as np
-import pandas as pd
 from pyproj import Geod
 
-from typing import Optional, Dict, Any, Tuple
+from typing import Tuple
 
-from aircraft_heading_gnn.utils.angles import wrap_deg, ang_diff_deg, circ_distance_deg, normalize_angle
+from aircraft_heading_gnn.utils.angles import ang_diff_deg, circ_distance_deg, normalize_angle
 
 # WGS-84 ellipsoid
 GEOD = Geod(ellps="WGS84")
