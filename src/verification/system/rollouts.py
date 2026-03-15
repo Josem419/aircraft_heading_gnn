@@ -5,9 +5,9 @@ Rollouts form the basis for verification and validation experiments.
 """
 
 from typing import Optional
-from verification.system.system import (
-    SystemState, Trajectory, TrajectoryStep, System, AgentModel
-)
+from verification.system.state import SystemState
+from verification.system.trajectory import Trajectory, TrajectoryStep
+from verification.system.system import System, AgentModel
 
 
 def rollout(
@@ -39,7 +39,7 @@ def rollout(
     
     # Initialize state
     if initial_state is None:
-        state = system.sample()
+        state = system.sample_initial_state()
     else:
         state = initial_state.copy()  # Copy to avoid mutating input
     
@@ -48,19 +48,22 @@ def rollout(
     for _ in range(num_steps):
         # Get observation (may include disturbances)
         observation = system.get_observation(state)
-        
+        obs_lp = system.disturbance_model.last_obs_log_prob
+
         # Agent decides action
         action = agent.act(observation)
-        
+
         # Step system forward (applies disturbances and dynamics)
         next_state = system.step(state, action)
-        
+        act_lp = system.disturbance_model.last_action_log_prob
+
         # Record step
         step = TrajectoryStep(
             state=state,
             action=action,
             observation=observation,
-            next_state=next_state
+            next_state=next_state,
+            disturbance_log_prob=obs_lp + act_lp,
         )
         trajectory.append(step)
         
