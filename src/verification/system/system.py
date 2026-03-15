@@ -1,170 +1,13 @@
 """Library System models, including environment, agent, and disturbance models.
-
-This module provides the core abstractions for verification and validation:
-- State representations for systems
-- Action and observation types
-- Environment, disturbance, and agent abstractions
-- System composition with standardized API in the abstract base System class
-
-The API is designed to support rollout-based verification where:
-  - Environment samples initial states
-  - Agent produces actions from observations
-  - Disturbances perturb actions and observations
-  - System propagates state forward
+    Defines the API contract for systems so that we can apply verifications tools
+    in a modular way.
 """
 
 import abc
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
-import numpy as np
-
-
-# ============================================================================
-# State Representations
-# ============================================================================
-
-
-@dataclass
-class AircraftState:
-    """State of a single aircraft.
-
-    Attributes:
-        position: (x, y) position in meters (local coordinates)
-        velocity: (vx, vy) velocity in m/s
-        heading: heading angle in radians (0 = North, clockwise)
-        icao24: unique aircraft identifier (optional)
-        metadata: additional aircraft data (e.g., callsign, altitude)
-    """
-
-    position: np.ndarray  # shape (2,)
-    velocity: np.ndarray  # shape (2,)
-    heading: float
-    icao24: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        """Ensure arrays are numpy arrays with correct shape."""
-        self.position = np.asarray(self.position, dtype=np.float32)
-        self.velocity = np.asarray(self.velocity, dtype=np.float32)
-        assert self.position.shape == (
-            2,
-        ), f"Position must be 2D, got {self.position.shape}"
-        assert self.velocity.shape == (
-            2,
-        ), f"Velocity must be 2D, got {self.velocity.shape}"
-
-    @property
-    def speed(self) -> float:
-        """Ground speed in m/s."""
-        return np.linalg.norm(self.velocity)
-
-    def copy(self) -> "AircraftState":
-        """Create a deep copy of this aircraft state."""
-        return AircraftState(
-            position=self.position.copy(),
-            velocity=self.velocity.copy(),
-            heading=self.heading,
-            icao24=self.icao24,
-            metadata=self.metadata.copy() if self.metadata else None,
-        )
-
-
-@dataclass
-class SystemState:
-    """Full system state including ego aircraft and surrounding traffic.
-
-    Attributes:
-        ego: state of the ego aircraft (under our control)
-        traffic: list of other aircraft states
-        time: current simulation time in seconds
-        metadata: additional system-level data
-    """
-
-    ego: AircraftState
-    traffic: List[AircraftState]
-    time: float = 0.0
-    metadata: Optional[Dict[str, Any]] = None
-
-    def copy(self) -> "SystemState":
-        """Create a deep copy of this system state."""
-        return SystemState(
-            ego=self.ego.copy(),
-            traffic=[ac.copy() for ac in self.traffic],
-            time=self.time,
-            metadata=self.metadata.copy() if self.metadata else None,
-        )
-
-
-# ============================================================================
-# Action and Observation Types
-# ============================================================================
-
-
-@dataclass
-class Action:
-    """Action taken by the agent.
-
-    For the aircraft heading advisory system, this is a commanded heading.
-
-    Attributes:
-        heading_command: target heading in radians
-        metadata: additional action data
-    """
-
-    heading_command: float
-    metadata: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class Observation:
-    """Observation received by the agent.
-
-    This can contain raw or processed features used by the agent.
-
-    Attributes:
-        ego_state: observed ego aircraft state
-        traffic_states: observed traffic aircraft states
-        graph_data: optional graph representation (e.g., PyG Data object)
-        features: optional processed feature vector
-        metadata: additional observation data
-    """
-
-    ego_state: AircraftState
-    traffic_states: List[AircraftState]
-    graph_data: Optional[Any] = None  # Could be torch_geometric.data.Data
-    features: Optional[np.ndarray] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class TrajectoryStep:
-    """Single step in a trajectory.
-
-    Attributes:
-        state: system state at this step
-        action: action taken at this step
-        observation: observation received at this step
-        next_state: resulting state after action
-    """
-
-    state: SystemState
-    action: Action
-    observation: Observation
-    next_state: SystemState
-
-
-class Trajectory(List[TrajectoryStep]):
-    """Trajectory represented as a sequence of (state, action, observation, next_state) steps.
-
-    This is a list subclass for convenience, but adds semantic meaning.
-    """
-
-    pass
-
-
-# ============================================================================
-# Abstract Base Classes
-# ============================================================================
+from typing import Dict, Any
+from verification.system.state import SystemState
+from verification.system.observations import Observation
+from verification.system.actions import Action
 
 
 class Environment(abc.ABC):
@@ -186,7 +29,7 @@ class Environment(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def sample(self) -> SystemState:
+    def sample_initial_state(self) -> SystemState:
         """Sample a random initial state from the environment.
 
         Returns:
@@ -296,6 +139,20 @@ class DisturbanceModel(abc.ABC):
         """
         pass
 
+    @property
+    def last_action_log_prob(self) -> float:
+        """Log-probability of the disturbance applied in the most recent
+        ``apply_action_disturbance`` call.  Subclasses should override this
+        when they can compute the density.  Defaults to 0.0."""
+        return 0.0
+
+    @property
+    def last_obs_log_prob(self) -> float:
+        """Log-probability of the disturbance applied in the most recent
+        ``apply_observation_disturbance`` call.  Subclasses should override
+        this when they can compute the density.  Defaults to 0.0."""
+        return 0.0
+
 class System(abc.ABC):
     """Abstract base class for the overall system.
 
@@ -368,10 +225,10 @@ class System(abc.ABC):
         """
         return self.environment.reset()
 
-    def sample(self) -> SystemState:
+    def sample_initial_state(self) -> SystemState:
         """Sample a random initial state.
 
         Returns:
             Random initial system state
         """
-        return self.environment.sample()
+        return self.environment.sample_initial_state()
