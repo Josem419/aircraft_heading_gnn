@@ -15,7 +15,7 @@ from __future__ import annotations
 import abc
 from typing import Callable, Optional
 
-from verification.system.system import Trajectory, TrajectoryStep
+from verification.system.trajectory import Trajectory, TrajectoryStep
 
 
 class Specification(abc.ABC):
